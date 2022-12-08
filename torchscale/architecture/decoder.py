@@ -13,6 +13,7 @@ from torchscale.architecture.utils import init_bert_params
 from torchscale.component.droppath import DropPath
 from torchscale.component.feedforward_network import FeedForwardNetwork, make_experts
 from torchscale.component.multihead_attention import MultiheadAttention
+from torchscale.component.sope_relative_position import SoPE
 from torchscale.component.relative_position_bias import RelativePositionBias
 from torchscale.component.xmoe.moe_layer import MOELayer
 from torchscale.component.xmoe.routing import Top1Gate, Top2Gate
@@ -262,10 +263,19 @@ class Decoder(nn.Module):
 
         self.output_projection = output_projection
 
+        self.self_attn_sope = None
+        self.cross_attn_sope = None
         self.self_attn_relative_position = None
         self.cross_attn_relative_position = None
-
-        if args.rel_pos_buckets > 0 and args.max_rel_pos > 0:
+        if args.sope_rel_pos:
+            self.self_attn_sope = SoPE(
+                args.decoder_embed_dim // args.decoder_attention_heads
+            )
+            if is_encoder_decoder:
+                self.cross_attn_sope = SoPE(
+                    args.decoder_embed_dim // args.decoder_attention_heads
+                )
+        elif args.rel_pos_buckets > 0 and args.max_rel_pos > 0:
             self.self_attn_relative_position = RelativePositionBias(
                 num_buckets=args.rel_pos_buckets,
                 max_distance=args.max_rel_pos,
@@ -398,14 +408,20 @@ class Decoder(nn.Module):
         # relative position
         self_attn_rel_pos_bias = None
         slen = prev_output_tokens.size(1)
-        if self.self_attn_relative_position is not None:
+        if self.self_attn_sope is not None:
+            offset = 0 if incremental_state is None else incremental_state[0]["prev_key"].shape[2]
+            self_attn_rel_pos_bias = self.self_attn_sope(slen, offset)
+        elif self.self_attn_relative_position is not None:
             self_attn_rel_pos_bias = self.self_attn_relative_position(
                 batch_size=x.size(1), qlen=slen, klen=slen
             )
             if incremental_state is not None:
                 self_attn_rel_pos_bias = self_attn_rel_pos_bias[:, -1:, :]
+
         cross_attn_rel_pos_bias = None
-        if self.cross_attn_relative_position is not None:
+        if self.cross_attn_sope is not None:
+            cross_attn_rel_pos_bias = self.cross_attn_sope(slen + encoder_out["encoder_out"].size(0))
+        elif self.cross_attn_relative_position is not None:
             cross_attn_rel_pos_bias = self.cross_attn_relative_position(
                 batch_size=x.size(1),
                 qlen=slen,

@@ -26,7 +26,7 @@ from omegaconf import II
 from torchscale.architecture.config import DecoderConfig
 from torchscale.architecture.decoder import Decoder
 
-DEFAULT_MAX_TARGET_POSITIONS = 1024
+DEFAULT_MAX_TARGET_POSITIONS = 4096
 logger = logging.getLogger(__name__)
 
 
@@ -184,6 +184,10 @@ class LanguageConfig(FairseqDataclass):
     subln: Optional[bool] = field(
         default=False,
     )
+    sope_rel_pos: Optional[bool] = field(
+        default=False,
+        metadata={"help": "use SoPE as the relative position embhedding"},
+    )
     rel_pos_buckets: Optional[int] = field(
         default=0,
     )
@@ -272,7 +276,10 @@ class LMDecoder(Decoder, FairseqIncrementalDecoder):
         return super().forward(src_tokens, self_attn_padding_mask, **kwargs)
 
     def max_positions(self):
-        return self.embed_positions.max_positions
+        if self.embed_positions is not None:
+            return self.embed_positions.max_positions
+        else:
+            return DEFAULT_MAX_TARGET_POSITIONS
 
     def reorder_incremental_state_scripting(
         self,
@@ -319,7 +326,10 @@ def base_lm_architecture(args):
 
     args.add_bos_token = getattr(args, "add_bos_token", False)
     args.no_token_positional_embeddings = getattr(
-        args, "no_token_positional_embeddings", False
+        args, "no_token_positional_embeddings", True
+    )
+    args.sope_rel_pos = getattr(
+        args, "sope_rel_pos", True
     )
     args.share_decoder_input_output_embed = getattr(
         args, "share_decoder_input_output_embed", False
@@ -348,3 +358,53 @@ def base_lm_architecture(args):
     args.offload_activations = getattr(args, "offload_activations", False)
     if args.offload_activations:
         args.checkpoint_activations = True
+
+@register_model_architecture("lm", "lm_medium")
+def lm_medium(args):
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 1024)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 4096)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 16)
+    args.decoder_layers = getattr(args, "decoder_layers", 24)
+    base_lm_architecture(args)
+
+@register_model_architecture("lm", "lm_large")
+def lm_large(args):
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 1280)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 5120)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 20)
+    args.decoder_layers = getattr(args, "decoder_layers", 36)
+    base_lm_architecture(args)
+
+
+@register_model_architecture("lm", "lm_xl")
+def lm_xl(args):
+    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", 1600)
+    args.decoder_ffn_embed_dim = getattr(args, "decoder_ffn_embed_dim", 6400)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 25)
+    args.decoder_layers = getattr(args, "decoder_layers", 48)
+    base_lm_architecture(args)
+
+
+@register_model_architecture("lm", "lm_medium_abs")
+def lm_medium_abs(args):
+    args.sope_rel_pos = getattr(
+        args, "sope_rel_pos", False
+    )
+    args.no_token_positional_embeddings = getattr(
+        args, "no_token_positional_embeddings", False
+    )
+    lm_medium(args)
+
+@register_model_architecture("lm", "lm_medium_bucket")
+def lm_mediumbucket(args):
+    args.sope_rel_pos = getattr(
+        args, "sope_rel_pos", False
+    )
+    args.rel_pos_buckets = getattr(
+        args, "rel_pos_buckets", 128
+    )
+    args.max_rel_pos = getattr(
+        args, "max_rel_pos", 2048
+    )
+    lm_medium(args)
+
