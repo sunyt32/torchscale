@@ -385,18 +385,18 @@ def lm_xl(args):
     base_lm_architecture(args)
 
 
-@register_model_architecture("lm", "lm_medium_abs")
-def lm_medium_abs(args):
+@register_model_architecture("lm", "lm_base_abs")
+def lm_base_abs(args):
     args.sope_rel_pos = getattr(
         args, "sope_rel_pos", False
     )
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
     )
-    lm_medium(args)
+    base_lm_architecture(args)
 
-@register_model_architecture("lm", "lm_medium_bucket")
-def lm_mediumbucket(args):
+@register_model_architecture("lm", "lm_base_bucket")
+def lm_base_bucket(args):
     args.sope_rel_pos = getattr(
         args, "sope_rel_pos", False
     )
@@ -406,5 +406,5 @@ def lm_mediumbucket(args):
     args.max_rel_pos = getattr(
         args, "max_rel_pos", 2048
     )
-    lm_medium(args)
+    base_lm_architecture(args)
 
