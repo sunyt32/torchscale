@@ -16,22 +16,18 @@ def fixed_pos_embedding(x, offset=0):
     return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
 
 def get_scale(dim, scale_base = 256):
-    x = np.arange(0, 4096, 1)
+    x = np.arange(0, 8192, 1)
     inv_freq = 1.0 / (10000 ** (np.arange(0, dim, 2) / dim))
     angle = x[:, None] * inv_freq
-    scale_init = -np.log(1 / ((np.arange(0, dim, 2) + 1 * dim) / (2 * dim)) - 1)
-    def sigmoid(x):
-        return 1 / (1 + np.exp(-x))
-
+    scale_init = (np.arange(0, dim, 2) + 0.2 * dim) / (1.2 * dim)
     def eval_fun(scale):
-        scale = sigmoid(scale)
         posi_scale = (scale ** (x[:, None] / scale_base))
         upper_bound = (np.cos(angle) * posi_scale).mean(1) # \sum_i cos n\theta_i p^{n}
         delta = (upper_bound[:-1] - upper_bound[1:]) / upper_bound[:-1] # \sum_n (f(n) - f(n+1)) / f(n)
         return delta
 
-    res = minimize(lambda scale: -eval_fun(scale).sum(), scale_init)
-    return sigmoid(res.x)
+    res = minimize(lambda scale: -eval_fun(scale).sum(), scale_init, method='SLSQP', bounds=[(0, 1)] * (dim // 2))
+    return res.x
 
 class SoPE(nn.Module):
     def __init__(
