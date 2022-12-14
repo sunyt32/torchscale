@@ -92,8 +92,10 @@ class MultiheadAttention(nn.Module):
         assert value is not None
         assert src_len, bsz == value.shape[:2]
 
-        q = self.q_proj(query)
-        k = self.k_proj(key)
+        dtype = query.dtype
+
+        q = self.q_proj(query).float()
+        k = self.k_proj(key).float()
         v = self.v_proj(value)
         q *= self.scaling
 
@@ -146,13 +148,10 @@ class MultiheadAttention(nn.Module):
             rel_pos = rel_pos.view(attn_weights.size())
             attn_weights = attn_weights + rel_pos
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as(
-            attn_weights
-        )
-        attn_probs = self.dropout_module(attn_weights)
-
+        attn_probs = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(dtype)
+        attn_probs = self.dropout_module(attn_probs)
         attn = torch.bmm(attn_probs, v)
-        attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
+        attn = attn.transpose(0, 1).reshape(tgt_len, bsz, embed_dim)
 
         if self.inner_attn_ln is not None:
             attn = self.inner_attn_ln(attn)

@@ -441,10 +441,8 @@ class Decoder(nn.Module):
         for idx, layer in enumerate(self.layers):
             if incremental_state is None:
                 self_attn_mask = torch.triu(
-                    torch.zeros([x.size(0), x.size(0)])
-                    .float()
-                    .fill_(float("-inf"))
-                    .type_as(x),
+                    torch.zeros([x.size(0), x.size(0)], device=x.device, dtype=torch.float32)
+                    .fill_(float("-inf")),
                     1,
                 )
             else:
