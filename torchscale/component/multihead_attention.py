@@ -99,11 +99,9 @@ class MultiheadAttention(nn.Module):
         v = self.v_proj(value)
         q *= self.scaling
 
-        dtype = q.dtype()
-
-        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
-        k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
-        v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
+        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+        k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+        v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if isinstance(rel_pos, tuple): # SoPE implementation
             sin, cos, scale = rel_pos
             if self.self_attention:
