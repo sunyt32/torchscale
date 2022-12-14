@@ -41,6 +41,8 @@ class SoPE(nn.Module):
         )
 
     def forward(self, len, offset=0):
-        scale = self.scale ** torch.arange(offset, len + offset, 1).to(self.scale).div(self.scale_base)[:, None]
+        scale = self.scale.float()
+        scale = scale ** torch.arange(offset, len + offset, 1).to(scale).div(self.scale_base)[:, None]
         sin, cos = fixed_pos_embedding(scale, offset=offset)
         return (sin, cos, scale)
+
