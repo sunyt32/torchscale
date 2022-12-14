@@ -99,9 +99,11 @@ class MultiheadAttention(nn.Module):
         v = self.v_proj(value)
         q *= self.scaling
 
-        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+        dtype = q.dtype()
+
+        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
+        k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
+        v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1).float()
         if isinstance(rel_pos, tuple): # SoPE implementation
             sin, cos, scale = rel_pos
             if self.self_attention:
@@ -151,7 +153,7 @@ class MultiheadAttention(nn.Module):
         attn_probs = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(dtype)
         attn_probs = self.dropout_module(attn_probs)
         attn = torch.bmm(attn_probs, v)
-        attn = attn.transpose(0, 1).reshape(tgt_len, bsz, embed_dim)
+        attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
 
         if self.inner_attn_ln is not None:
             attn = self.inner_attn_ln(attn)
