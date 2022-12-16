@@ -129,6 +129,10 @@ class MultiheadAttention(nn.Module):
             )
             src_len = k.size(1)
 
+        if k.shape[1] >= self.scale_length:
+            scale_attention = torch.maximum(torch.ones(q.shape[1]), torch.arange(k.shape[1] - q.shape[1], k.shape[2], 1).log() / math.log(self.scale_length)).to(q)
+            q = q * scale_attention.unsqueeze(-1)
+
         attn_weights = torch.bmm(q, k.transpose(1, 2))
 
         if attn_mask is not None:
@@ -147,10 +151,6 @@ class MultiheadAttention(nn.Module):
         if isinstance(rel_pos, torch.Tensor):
             rel_pos = rel_pos.view(attn_weights.size())
             attn_weights = attn_weights + rel_pos
-
-        if attn_weights.shape[2] >= self.scale_length:
-            scale_attention = torch.maximum(torch.ones(attn_weights.shape[1]), torch.arange(attn_weights.shape[2] - attn_weights.shape[1], attn_weights.shape[2], 1).log() / math.log(self.scale_length)).to(attn_weights)
-            attn_weights = attn_weights * scale_attention.unsqueeze(-1)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as(
             attn_weights
