@@ -7,11 +7,11 @@ from scipy.optimize import minimize
 import torch
 import torch.nn as nn
 
-def fixed_pos_embedding(x, offset=0):
+def fixed_pos_embedding(x):
     seq_len, dim = x.shape
     inv_freq = 1.0 / (10000 ** (torch.arange(0, dim) / dim))
     sinusoid_inp = (
-        torch.einsum("i , j -> i j", torch.arange(offset, seq_len + offset, dtype=torch.float), inv_freq).to(x)
+        torch.einsum("i , j -> i j", torch.arange(0, seq_len, dtype=torch.float), inv_freq).to(x)
     )
     return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
 
@@ -24,12 +24,12 @@ class SoPE(nn.Module):
         self.head_dim = head_dim
         self.scale_base = scale_base
         self.register_buffer(
-            "scale", (torch.arange(0, head_dim, 2) + 0.35 * head_dim) / (1.35 * head_dim)
+            "scale", (torch.arange(0, head_dim, 2) + 0.4 * head_dim) / (1.4 * head_dim)
         )
 
     def forward(self, len, offset=0):
-        scale = self.scale.float()
-        scale = scale ** torch.arange(offset, len + offset, 1).to(scale).div(self.scale_base)[:, None]
-        scale = (scale * (3e-5 / scale.min())).to(self.scale)
-        sin, cos = fixed_pos_embedding(scale, offset=offset)
+        min = -(len + offset) // 2
+        max = len + offset + min
+        scale = self.scale ** torch.arange(min, max, 1).to(self.scale).div(self.scale_base)[:, None]
+        sin, cos = fixed_pos_embedding(scale)
         return (sin, cos, scale)

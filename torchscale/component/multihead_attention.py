@@ -102,15 +102,6 @@ class MultiheadAttention(nn.Module):
         q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        if isinstance(rel_pos, tuple): # SoPE implementation
-            sin, cos, scale = rel_pos
-            if self.self_attention:
-                k = apply_rotary_pos_emb(k, sin, cos, scale = 1 / scale)
-                q = apply_rotary_pos_emb(q, sin, cos, scale = scale)
-            else:
-                k = apply_rotary_pos_emb(k, sin[:k.shape[1]], cos[:k.shape[1]], scale = 1 / scale[:k.shape[1]])
-                q = apply_rotary_pos_emb(q, sin[k.shape[1]:], cos[k.shape[1]:], scale = scale[k.shape[1]:])
-        
         if incremental_state is not None:
             if "prev_key" in incremental_state:
                 prev_key = incremental_state["prev_key"].view(
@@ -129,8 +120,17 @@ class MultiheadAttention(nn.Module):
             )
             src_len = k.size(1)
 
-        if k.shape[1] >= self.scale_length:
-            scale_attention = torch.maximum(torch.ones(q.shape[1]), torch.arange(k.shape[1] - q.shape[1], k.shape[2], 1).log() / math.log(self.scale_length)).to(q)
+        if isinstance(rel_pos, tuple): # SoPE implementation
+            sin, cos, scale = rel_pos
+            if self.self_attention:
+                k = apply_rotary_pos_emb(k, sin, cos, scale = 1 / scale)
+                q = apply_rotary_pos_emb(q, sin, cos, scale = scale[-q.shape[1]:])
+            else:
+                k = apply_rotary_pos_emb(k, sin[:k.shape[1]], cos[:k.shape[1]], scale = 1 / scale[:k.shape[1]])
+                q = apply_rotary_pos_emb(q, sin[k.shape[1]:], cos[k.shape[1]:], scale = scale[k.shape[1]:])
+
+        if k.shape[1] > self.scale_length:
+            scale_attention = torch.maximum(torch.ones(q.shape[1]), torch.arange(k.shape[1] - q.shape[1], k.shape[1], 1).log() / math.log(self.scale_length)).to(q)
             q = q * scale_attention.unsqueeze(-1)
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
@@ -167,5 +167,4 @@ class MultiheadAttention(nn.Module):
         attn_weights = attn_weights.view(
             bsz, self.num_heads, tgt_len, src_len
         ).transpose(1, 0)
-
         return attn, attn_weights
