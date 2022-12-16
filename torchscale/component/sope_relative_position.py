@@ -15,34 +15,21 @@ def fixed_pos_embedding(x, offset=0):
     )
     return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
 
-def get_scale(dim, scale_base = 256):
-    x = np.arange(0, 8192, 1)
-    inv_freq = 1.0 / (10000 ** (np.arange(0, dim, 2) / dim))
-    angle = x[:, None] * inv_freq
-    scale_init = (np.arange(0, dim, 2) + 0.2 * dim) / (1.2 * dim)
-    def eval_fun(scale):
-        posi_scale = (scale ** (x[:, None] / scale_base))
-        upper_bound = (np.cos(angle) * posi_scale).mean(1) # \sum_i cos n\theta_i p^{n}
-        delta = (upper_bound[:-1] - upper_bound[1:]) / upper_bound[:-1] # \sum_n (f(n) - f(n+1)) / f(n)
-        return delta
-
-    res = minimize(lambda scale: -eval_fun(scale).sum(), scale_init, method='SLSQP', bounds=[(0, 1)] * (dim // 2))
-    return res.x
 
 class SoPE(nn.Module):
     def __init__(
-        self, head_dim, scale_base = 256
+        self, head_dim, scale_base = 512
     ):
         super().__init__()
         self.head_dim = head_dim
         self.scale_base = scale_base
         self.register_buffer(
-            "scale", torch.from_numpy(get_scale(self.head_dim, scale_base)).float()
+            "scale", (torch.arange(0, head_dim, 2) + 0.33 * head_dim) / (1.33 * head_dim)
         )
 
     def forward(self, len, offset=0):
         scale = self.scale.float()
         scale = scale ** torch.arange(offset, len + offset, 1).to(scale).div(self.scale_base)[:, None]
+        scale = (scale * (3e-5 / scale.min())).to(self.scale)
         sin, cos = fixed_pos_embedding(scale, offset=offset)
         return (sin, cos, scale)
-

@@ -109,6 +109,7 @@ class DecoderLayer(nn.Module):
             embed_dim,
             args.decoder_attention_heads,
             dropout=args.attention_dropout,
+            scale_length=args.scale_attention_length,
             self_attention=True,
             encoder_decoder_attention=False,
             subln=args.subln,
@@ -120,6 +121,7 @@ class DecoderLayer(nn.Module):
             embed_dim,
             args.decoder_attention_heads,
             dropout=args.attention_dropout,
+            scale_length=args.scale_attention_length,
             self_attention=False,
             encoder_decoder_attention=True,
             subln=args.subln,
@@ -441,8 +443,10 @@ class Decoder(nn.Module):
         for idx, layer in enumerate(self.layers):
             if incremental_state is None:
                 self_attn_mask = torch.triu(
-                    torch.zeros([x.size(0), x.size(0)], device=x.device, dtype=torch.float32)
-                    .fill_(float("-inf")),
+                    torch.zeros([x.size(0), x.size(0)])
+                    .float()
+                    .fill_(float("-inf"))
+                    .type_as(x),
                     1,
                 )
             else:

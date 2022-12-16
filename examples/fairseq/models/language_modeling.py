@@ -70,6 +70,9 @@ class LanguageConfig(FairseqDataclass):
             "help": "if set, disables positional embeddings (outside self attention)"
         },
     )
+    scale_attention_length: int = field(
+        default=1024, metadata={"help": "above which length scale is applied"}
+    )
     share_decoder_input_output_embed: bool = field(
         default=False, metadata={"help": "share decoder input and output embeddings"}
     )

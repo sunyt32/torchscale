@@ -38,6 +38,7 @@ class MultiheadAttention(nn.Module):
         embed_dim,
         num_heads,
         dropout=0.0,
+        scale_length=2048,
         self_attention=False,
         encoder_decoder_attention=False,
         subln=False,
@@ -47,6 +48,7 @@ class MultiheadAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.scaling = self.head_dim**-0.5
+        self.scale_length = scale_length
 
         self.self_attention = self_attention
         self.encoder_decoder_attention = encoder_decoder_attention
@@ -92,10 +94,8 @@ class MultiheadAttention(nn.Module):
         assert value is not None
         assert src_len, bsz == value.shape[:2]
 
-        dtype = query.dtype
-
-        q = self.q_proj(query).float()
-        k = self.k_proj(key).float()
+        q = self.q_proj(query)
+        k = self.k_proj(key)
         v = self.v_proj(value)
         q *= self.scaling
 
@@ -148,8 +148,15 @@ class MultiheadAttention(nn.Module):
             rel_pos = rel_pos.view(attn_weights.size())
             attn_weights = attn_weights + rel_pos
 
-        attn_probs = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(dtype)
-        attn_probs = self.dropout_module(attn_probs)
+        if attn_weights.shape[2] >= self.scale_length:
+            scale_attention = torch.maximum(torch.ones(attn_weights.shape[1]), torch.arange(attn_weights.shape[2] - attn_weights.shape[1], attn_weights.shape[2], 1).log() / math.log(self.scale_length)).to(attn_weights)
+            attn_weights = attn_weights * scale_attention.unsqueeze(-1)
+
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as(
+            attn_weights
+        )
+        attn_probs = self.dropout_module(attn_weights)
+
         attn = torch.bmm(attn_probs, v)
         attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
 

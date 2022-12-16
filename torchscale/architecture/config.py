@@ -93,6 +93,7 @@ class DecoderConfig(object):
             "moe_normalize_gate_prob_before_dropping", False
         )
         self.use_xmoe = kwargs.pop("use_xmoe", False)
+        self.scale_attention_length = kwargs.pop("scale_attention_length", 1024)
         self.sope_rel_pos = kwargs.pop("sope_rel_pos", False)
         self.rel_pos_buckets = kwargs.pop("rel_pos_buckets", 0)
         self.max_rel_pos = kwargs.pop("max_rel_pos", 0)
