@@ -13,7 +13,7 @@ from torchscale.architecture.utils import init_bert_params
 from torchscale.component.droppath import DropPath
 from torchscale.component.feedforward_network import FeedForwardNetwork, make_experts
 from torchscale.component.multihead_attention import MultiheadAttention
-from torchscale.component.sope_relative_position import SoPE
+from torchscale.component.expo_relative_position import ExPo
 from torchscale.component.relative_position_bias import RelativePositionBias
 from torchscale.component.xmoe.moe_layer import MOELayer
 from torchscale.component.xmoe.routing import Top1Gate, Top2Gate
@@ -109,7 +109,6 @@ class DecoderLayer(nn.Module):
             embed_dim,
             args.decoder_attention_heads,
             dropout=args.attention_dropout,
-            scale_length=args.scale_attention_length,
             self_attention=True,
             encoder_decoder_attention=False,
             subln=args.subln,
@@ -121,7 +120,6 @@ class DecoderLayer(nn.Module):
             embed_dim,
             args.decoder_attention_heads,
             dropout=args.attention_dropout,
-            scale_length=args.scale_attention_length,
             self_attention=False,
             encoder_decoder_attention=True,
             subln=args.subln,
@@ -265,16 +263,16 @@ class Decoder(nn.Module):
 
         self.output_projection = output_projection
 
-        self.self_attn_sope = None
-        self.cross_attn_sope = None
+        self.self_attn_expo = None
+        self.cross_attn_expo = None
         self.self_attn_relative_position = None
         self.cross_attn_relative_position = None
-        if args.sope_rel_pos:
-            self.self_attn_sope = SoPE(
+        if args.expo_rel_pos:
+            self.self_attn_expo = ExPo(
                 args.decoder_embed_dim // args.decoder_attention_heads
             )
             if is_encoder_decoder:
-                self.cross_attn_sope = SoPE(
+                self.cross_attn_expo = ExPo(
                     args.decoder_embed_dim // args.decoder_attention_heads
                 )
         elif args.rel_pos_buckets > 0 and args.max_rel_pos > 0:
@@ -410,9 +408,9 @@ class Decoder(nn.Module):
         # relative position
         self_attn_rel_pos_bias = None
         slen = prev_output_tokens.size(1)
-        if self.self_attn_sope is not None:
+        if self.self_attn_expo is not None:
             offset = 0 if incremental_state is None else incremental_state[0]["prev_key"].shape[2]
-            self_attn_rel_pos_bias = self.self_attn_sope(slen, offset)
+            self_attn_rel_pos_bias = self.self_attn_expo(slen, offset)
         elif self.self_attn_relative_position is not None:
             self_attn_rel_pos_bias = self.self_attn_relative_position(
                 batch_size=x.size(1), qlen=slen, klen=slen
@@ -421,8 +419,8 @@ class Decoder(nn.Module):
                 self_attn_rel_pos_bias = self_attn_rel_pos_bias[:, -1:, :]
 
         cross_attn_rel_pos_bias = None
-        if self.cross_attn_sope is not None:
-            cross_attn_rel_pos_bias = self.cross_attn_sope(slen + encoder_out["encoder_out"].size(0))
+        if self.cross_attn_expo is not None:
+            cross_attn_rel_pos_bias = self.cross_attn_expo(slen + encoder_out["encoder_out"].size(0))
         elif self.cross_attn_relative_position is not None:
             cross_attn_rel_pos_bias = self.cross_attn_relative_position(
                 batch_size=x.size(1),

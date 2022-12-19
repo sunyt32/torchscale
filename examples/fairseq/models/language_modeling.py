@@ -70,9 +70,6 @@ class LanguageConfig(FairseqDataclass):
             "help": "if set, disables positional embeddings (outside self attention)"
         },
     )
-    scale_attention_length: int = field(
-        default=1024, metadata={"help": "above which length scale is applied"}
-    )
     share_decoder_input_output_embed: bool = field(
         default=False, metadata={"help": "share decoder input and output embeddings"}
     )
@@ -187,9 +184,9 @@ class LanguageConfig(FairseqDataclass):
     subln: Optional[bool] = field(
         default=False,
     )
-    sope_rel_pos: Optional[bool] = field(
+    expo_rel_pos: Optional[bool] = field(
         default=False,
-        metadata={"help": "use SoPE as the relative position embhedding"},
+        metadata={"help": "use ExPo as the relative position embhedding"},
     )
     rel_pos_buckets: Optional[int] = field(
         default=0,
@@ -331,8 +328,8 @@ def base_lm_architecture(args):
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", True
     )
-    args.sope_rel_pos = getattr(
-        args, "sope_rel_pos", True
+    args.expo_rel_pos = getattr(
+        args, "expo_rel_pos", True
     )
     args.share_decoder_input_output_embed = getattr(
         args, "share_decoder_input_output_embed", False
@@ -390,8 +387,8 @@ def lm_xl(args):
 
 @register_model_architecture("lm", "lm_base_abs")
 def lm_base_abs(args):
-    args.sope_rel_pos = getattr(
-        args, "sope_rel_pos", False
+    args.expo_rel_pos = getattr(
+        args, "expo_rel_pos", False
     )
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
@@ -400,8 +397,8 @@ def lm_base_abs(args):
 
 @register_model_architecture("lm", "lm_base_bucket")
 def lm_base_bucket(args):
-    args.sope_rel_pos = getattr(
-        args, "sope_rel_pos", False
+    args.expo_rel_pos = getattr(
+        args, "expo_rel_pos", False
     )
     args.rel_pos_buckets = getattr(
         args, "rel_pos_buckets", 128

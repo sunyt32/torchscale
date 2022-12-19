@@ -38,7 +38,6 @@ class MultiheadAttention(nn.Module):
         embed_dim,
         num_heads,
         dropout=0.0,
-        scale_length=2048,
         self_attention=False,
         encoder_decoder_attention=False,
         subln=False,
@@ -48,7 +47,6 @@ class MultiheadAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.scaling = self.head_dim**-0.5
-        self.scale_length = scale_length
 
         self.self_attention = self_attention
         self.encoder_decoder_attention = encoder_decoder_attention
@@ -120,21 +118,16 @@ class MultiheadAttention(nn.Module):
             )
             src_len = k.size(1)
 
-        if isinstance(rel_pos, tuple): # SoPE implementation
+        if isinstance(rel_pos, tuple): # ExPo implementation
             sin, cos, scale = rel_pos
             if self.self_attention:
                 k = apply_rotary_pos_emb(k, sin, cos, scale = 1 / scale)
-                q = apply_rotary_pos_emb(q, sin, cos, scale = scale[-q.shape[1]:])
+                q = apply_rotary_pos_emb(q, sin[-q.shape[1]:], cos[-q.shape[1]:], scale = scale[-q.shape[1]:])
             else:
                 k = apply_rotary_pos_emb(k, sin[:k.shape[1]], cos[:k.shape[1]], scale = 1 / scale[:k.shape[1]])
                 q = apply_rotary_pos_emb(q, sin[k.shape[1]:], cos[k.shape[1]:], scale = scale[k.shape[1]:])
 
-        if k.shape[1] > self.scale_length:
-            scale_attention = torch.maximum(torch.ones(q.shape[1]), torch.arange(k.shape[1] - q.shape[1], k.shape[1], 1).log() / math.log(self.scale_length)).to(q)
-            q = q * scale_attention.unsqueeze(-1)
-
         attn_weights = torch.bmm(q, k.transpose(1, 2))
-
         if attn_mask is not None:
             attn_weights = torch.nan_to_num(attn_weights)
             attn_mask = attn_mask.unsqueeze(0)
