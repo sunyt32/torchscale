@@ -89,7 +89,7 @@ We also support the `Decoder` architecture and the `EncoderDecoder` architecture
 
 - [Blockwise Causal Attention (BCA)](https://arxiv.org/abs/2212.10554)
   * enabled by adjusting *block_size*. If *block_size=-1*, BCA will not be implemented. 
-  * Setting *block_size* as pre-training length is recommanded.
+  * Setting *block_size* as pre-training length is recommended.
 
 - [SparseClip: improving the gradient clipping for sparse MoE models](https://arxiv.org/abs/2211.13184)
   * we provide a [sample code](examples/fairseq/utils/sparse_clip.py) that can be easily adapted to the FairSeq (or other) repo.
