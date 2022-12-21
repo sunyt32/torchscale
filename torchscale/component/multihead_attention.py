@@ -47,6 +47,8 @@ class MultiheadAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.scaling = self.head_dim**-0.5
+        self.block_size = args.block_size
+        self.half_block_size = self.block_size // 2
 
         self.self_attention = self_attention
         self.encoder_decoder_attention = encoder_decoder_attention
@@ -92,33 +94,50 @@ class MultiheadAttention(nn.Module):
         assert value is not None
         assert src_len, bsz == value.shape[:2]
 
-        q = self.q_proj(query)
+        q = self.q_proj(query) # tgt_len, bsz, dim
         k = self.k_proj(key)
         v = self.v_proj(value)
         q *= self.scaling
-
-        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        if incremental_state is not None:
-            if "prev_key" in incremental_state:
-                prev_key = incremental_state["prev_key"].view(
-                    bsz * self.num_heads, -1, self.head_dim
+        if self.block_size > 0 and tgt_len > self.block_size: # divide block
+            assert tgt_len % self.half_block_size == 0
+            if incremental_state is not None:
+                incremental_state["prev_key"] = k.view(
+                    bsz, self.num_heads, -1, self.head_dim
                 )
-                prev_value = incremental_state["prev_value"].view(
-                    bsz * self.num_heads, -1, self.head_dim
+                incremental_state["prev_value"] = v.view(
+                    bsz, self.num_heads, -1, self.head_dim
                 )
-                k = torch.cat([prev_key, k], dim=1)
-                v = torch.cat([prev_value, v], dim=1)
-            incremental_state["prev_key"] = k.view(
-                bsz, self.num_heads, -1, self.head_dim
-            )
-            incremental_state["prev_value"] = v.view(
-                bsz, self.num_heads, -1, self.head_dim
-            )
-            src_len = k.size(1)
 
-        if isinstance(rel_pos, tuple): # ExPo implementation
+            q = q.view(-1, self.half_block_size, bsz * self.num_heads, self.head_dim).transpose(1, 2).reshape(-1, self.half_block_size, self.head_dim)
+            k = F.pad(k, (0, 0, 0, 0, self.half_block_size, 0)).unfold(0, self.block_size, self.half_block_size).reshape(-1, self.head_dim, self.block_size).transpose(1, 2)
+            v = F.pad(v, (0, 0, 0, 0, self.half_block_size, 0)).unfold(0, self.block_size, self.half_block_size).reshape(-1, self.head_dim, self.block_size).transpose(1, 2)
+            bsz *= tgt_len // self.half_block_size
+            tgt_len = self.half_block_size
+            src_len = self.block_size
+            
+        else:
+            q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+            k = k.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+            v = v.view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+            if incremental_state is not None:
+                if "prev_key" in incremental_state:
+                    prev_key = incremental_state["prev_key"].view(
+                        bsz * self.num_heads, -1, self.head_dim
+                    )
+                    prev_value = incremental_state["prev_value"].view(
+                        bsz * self.num_heads, -1, self.head_dim
+                    )
+                    k = torch.cat([prev_key, k], dim=1)
+                    v = torch.cat([prev_value, v], dim=1)
+                incremental_state["prev_key"] = k.view(
+                    bsz, self.num_heads, -1, self.head_dim
+                )
+                incremental_state["prev_value"] = v.view(
+                    bsz, self.num_heads, -1, self.head_dim
+                )
+                src_len = k.size(1)
+
+        if isinstance(rel_pos, tuple): # XPos implementation
             sin, cos, scale = rel_pos
             if self.self_attention:
                 k = apply_rotary_pos_emb(k, sin, cos, scale = 1 / scale)
@@ -149,9 +168,11 @@ class MultiheadAttention(nn.Module):
             attn_weights
         )
         attn_probs = self.dropout_module(attn_weights)
-
         attn = torch.bmm(attn_probs, v)
-        attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
+        if bsz > key_bsz: # merge block
+            attn = attn.view(-1, key_bsz * self.num_heads, self.half_block_size, self.head_dim).transpose(1, 2).reshape(-1, key_bsz, embed_dim)
+        else:
+            attn = attn.transpose(0, 1).reshape(-1, bsz, embed_dim)
 
         if self.inner_attn_ln is not None:
             attn = self.inner_attn_ln(attn)

@@ -11,6 +11,7 @@ It has the implementation of fundamental research to improve modeling generality
 - Stability - [**DeepNet**](https://arxiv.org/abs/2203.00555): scaling Transformers to 1,000 Layers and beyond
 - Generality - [**Foundation Transformers (Magneto)**](https://arxiv.org/abs/2210.06423): towards true general-purpose modeling across tasks and modalities (including language, vision, speech, and multimodal)
 - Efficiency - [**X-MoE**](https://arxiv.org/abs/2204.09179): scalable & finetunable sparse Mixture-of-Experts (MoE)
+- Extrapolatablility - [**LEX**](https://arxiv.org/abs/2212.10554): A Length-Extrapolatable Transformer
 
 ## News
 
@@ -83,8 +84,12 @@ We also support the `Decoder` architecture and the `EncoderDecoder` architecture
   * enabled by *multiway=True*.
   * It provides a pool of Transformer's parameters used for different modalities.
 
-- [Relative position bias](https://arxiv.org/abs/1910.10683)
-  * enabled by adjusting *rel_pos_buckets* and *max_rel_pos*.
+- [Extrapolatable position embedding (Xpos)](https://arxiv.org/abs/1910.10683)
+  * enabled by *xpos_rel_pos=True*.
+
+- [Blockwise Causal Attention (BCA)](https://arxiv.org/abs/2212.10554)
+  * enabled by adjusting *block_size*. If *block_size=-1*, BCA will not be implemented. 
+  * Setting *block_size* as pre-training length is recommanded.
 
 - [SparseClip: improving the gradient clipping for sparse MoE models](https://arxiv.org/abs/2211.13184)
   * we provide a [sample code](examples/fairseq/utils/sparse_clip.py) that can be easily adapted to the FairSeq (or other) repo.

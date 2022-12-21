@@ -6,6 +6,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from apex.normalization import FusedLayerNorm as LayerNorm
 from fairscale.nn import checkpoint_wrapper, wrap
 
@@ -13,7 +14,7 @@ from torchscale.architecture.utils import init_bert_params
 from torchscale.component.droppath import DropPath
 from torchscale.component.feedforward_network import FeedForwardNetwork, make_experts
 from torchscale.component.multihead_attention import MultiheadAttention
-from torchscale.component.expo_relative_position import ExPo
+from torchscale.component.xpos_relative_position import XPos
 from torchscale.component.relative_position_bias import RelativePositionBias
 from torchscale.component.xmoe.moe_layer import MOELayer
 from torchscale.component.xmoe.routing import Top1Gate, Top2Gate
@@ -263,16 +264,19 @@ class Decoder(nn.Module):
 
         self.output_projection = output_projection
 
-        self.self_attn_expo = None
-        self.cross_attn_expo = None
+        self.block_size = args.block_size
+        self.half_block_size = self.block_size // 2
+
+        self.self_attn_xpos = None
+        self.cross_attn_xpos = None
         self.self_attn_relative_position = None
         self.cross_attn_relative_position = None
-        if args.expo_rel_pos:
-            self.self_attn_expo = ExPo(
+        if args.xpos_rel_pos:
+            self.self_attn_xpos = XPos(
                 args.decoder_embed_dim // args.decoder_attention_heads
             )
             if is_encoder_decoder:
-                self.cross_attn_expo = ExPo(
+                self.cross_attn_xpos = XPos(
                     args.decoder_embed_dim // args.decoder_attention_heads
                 )
         elif args.rel_pos_buckets > 0 and args.max_rel_pos > 0:
@@ -398,7 +402,20 @@ class Decoder(nn.Module):
         return_all_hiddens=False,
         token_embeddings=None,
         **kwargs
-    ):
+    ): 
+        if self.block_size > 0 and prev_output_tokens.shape[1] > self.block_size: # padding to complete block
+            activate_block = True
+            src_length = prev_output_tokens.shape[1]
+            pad_length = (src_length + self.half_block_size - 1) // self.half_block_size * self.half_block_size
+            align_pad_length = pad_length - src_length
+            incremental_length = pad_length - self.block_size
+            if self_attn_padding_mask is None:
+                self_attn_padding_mask = torch.zeros_like(prev_output_tokens)
+
+            prev_output_tokens = F.pad(prev_output_tokens, (0, align_pad_length))
+            self_attn_padding_mask = F.pad(self_attn_padding_mask, (self.half_block_size, align_pad_length), value=1).unfold(1, self.block_size, self.half_block_size).transpose(0, 1).reshape(-1, self.block_size)
+        else:
+            activate_block = False
         # embed tokens and positions
         x, _ = self.forward_embedding(
             prev_output_tokens, token_embeddings, incremental_state
@@ -408,9 +425,12 @@ class Decoder(nn.Module):
         # relative position
         self_attn_rel_pos_bias = None
         slen = prev_output_tokens.size(1)
-        if self.self_attn_expo is not None:
-            offset = 0 if incremental_state is None else incremental_state[0]["prev_key"].shape[2]
-            self_attn_rel_pos_bias = self.self_attn_expo(slen, offset)
+        if self.self_attn_xpos is not None:
+            if activate_block:
+                self_attn_rel_pos_bias = self.self_attn_xpos(self.block_size, 0)
+            else:
+                offset = 0 if incremental_state is None else incremental_state[0]["prev_key"].shape[2]
+                self_attn_rel_pos_bias = self.self_attn_xpos(slen, offset)
         elif self.self_attn_relative_position is not None:
             self_attn_rel_pos_bias = self.self_attn_relative_position(
                 batch_size=x.size(1), qlen=slen, klen=slen
@@ -419,8 +439,8 @@ class Decoder(nn.Module):
                 self_attn_rel_pos_bias = self_attn_rel_pos_bias[:, -1:, :]
 
         cross_attn_rel_pos_bias = None
-        if self.cross_attn_expo is not None:
-            cross_attn_rel_pos_bias = self.cross_attn_expo(slen + encoder_out["encoder_out"].size(0))
+        if self.cross_attn_xpos is not None:
+            cross_attn_rel_pos_bias = self.cross_attn_xpos(slen + encoder_out["encoder_out"].size(0))
         elif self.cross_attn_relative_position is not None:
             cross_attn_rel_pos_bias = self.cross_attn_relative_position(
                 batch_size=x.size(1),
@@ -440,13 +460,22 @@ class Decoder(nn.Module):
 
         for idx, layer in enumerate(self.layers):
             if incremental_state is None:
-                self_attn_mask = torch.triu(
-                    torch.zeros([x.size(0), x.size(0)])
-                    .float()
-                    .fill_(float("-inf"))
-                    .type_as(x),
-                    1,
-                )
+                if activate_block:
+                    self_attn_mask = torch.triu(
+                        torch.zeros([self.half_block_size, self.block_size])
+                        .float()
+                        .fill_(float("-inf"))
+                        .type_as(x),
+                        self.half_block_size + 1,
+                    )
+                else:
+                    self_attn_mask = torch.triu(
+                        torch.zeros([x.size(0), x.size(0)])
+                        .float()
+                        .fill_(float("-inf"))
+                        .type_as(x),
+                        1,
+                    )
             else:
                 self_attn_mask = None
                 if idx not in incremental_state:
@@ -466,11 +495,22 @@ class Decoder(nn.Module):
             )
             l_aux.append(l_aux_i)
             inner_states.append(x)
+            if self.block_size > 0 and incremental_state is not None:
+                if activate_block:
+                    incremental_state[idx]["prev_key"] = incremental_state[idx]["prev_key"][:, :, incremental_length:(src_length + 1)]
+                    incremental_state[idx]["prev_value"] = incremental_state[idx]["prev_value"][:, :, incremental_length:(src_length + 1)]
+                else:
+                    if incremental_state[idx]["prev_key"].shape[2] > self.block_size:
+                        incremental_state[idx]["prev_key"] = incremental_state[idx]["prev_key"][:, :, self.half_block_size:]
+                        incremental_state[idx]["prev_value"] = incremental_state[idx]["prev_value"][:, :, self.half_block_size:]
+
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
 
         x = x.transpose(0, 1)
+        if activate_block:
+            x = x[:, :src_length]
 
         if not features_only:
             x = self.output_layer(x)

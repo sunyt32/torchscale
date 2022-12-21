@@ -13,7 +13,7 @@ def fixed_pos_embedding(x):
     return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
 
 
-class ExPo(nn.Module):
+class XPos(nn.Module):
     def __init__(
         self, head_dim, scale_base = 512
     ):

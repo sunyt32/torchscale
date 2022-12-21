@@ -184,9 +184,12 @@ class LanguageConfig(FairseqDataclass):
     subln: Optional[bool] = field(
         default=False,
     )
-    expo_rel_pos: Optional[bool] = field(
+    xpos_rel_pos: Optional[bool] = field(
         default=False,
-        metadata={"help": "use ExPo as the relative position embhedding"},
+        metadata={"help": "use XPos as the relative position embhedding"},
+    )
+    block_size: Optional[int] = field(
+        default=2048,
     )
     rel_pos_buckets: Optional[int] = field(
         default=0,
@@ -328,8 +331,11 @@ def base_lm_architecture(args):
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", True
     )
-    args.expo_rel_pos = getattr(
-        args, "expo_rel_pos", True
+    args.xpos_rel_pos = getattr(
+        args, "xpos_rel_pos", True
+    )
+    args.block_size = getattr(
+        args, "block_size", 2048
     )
     args.share_decoder_input_output_embed = getattr(
         args, "share_decoder_input_output_embed", False
@@ -387,8 +393,8 @@ def lm_xl(args):
 
 @register_model_architecture("lm", "lm_base_abs")
 def lm_base_abs(args):
-    args.expo_rel_pos = getattr(
-        args, "expo_rel_pos", False
+    args.xpos_rel_pos = getattr(
+        args, "xpos_rel_pos", False
     )
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
@@ -397,8 +403,8 @@ def lm_base_abs(args):
 
 @register_model_architecture("lm", "lm_base_bucket")
 def lm_base_bucket(args):
-    args.expo_rel_pos = getattr(
-        args, "expo_rel_pos", False
+    args.xpos_rel_pos = getattr(
+        args, "xpos_rel_pos", False
     )
     args.rel_pos_buckets = getattr(
         args, "rel_pos_buckets", 128
