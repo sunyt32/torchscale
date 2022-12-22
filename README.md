@@ -17,6 +17,9 @@ It has the implementation of fundamental research to improve modeling generality
 
 - November, 2022: TorchScale 0.1.1 released [[Paper](https://arxiv.org/abs/2211.13184)] [[PyPI](https://pypi.org/project/torchscale/)]
 
+## Third-Party Implementation
+- XPos: [**Flash-Attention**](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/layers/rotary.py)
+
 ## Installation
 
 To install:

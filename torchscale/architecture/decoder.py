@@ -403,7 +403,7 @@ class Decoder(nn.Module):
         token_embeddings=None,
         **kwargs
     ): 
-        if self.block_size > 0 and prev_output_tokens.shape[1] > self.block_size: # padding to complete block
+        if self.block_size > 0 and prev_output_tokens.shape[1] > self.block_size and incremental_state is None: # padding to complete block
             activate_block = True
             src_length = prev_output_tokens.shape[1]
             pad_length = (src_length + self.half_block_size - 1) // self.half_block_size * self.half_block_size
