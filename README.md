@@ -1,3 +1,34 @@
+# **LEX**: A Length-Extrapolatable Transformer
+
+## Key Feature
+### [**XPos**](https://github.com/sunyt32/torchscale/blob/main/torchscale/component/xpos_relative_position.py): An Extrapolatable Position Embedding
+$$
+f_q(q,n)=
+\begin{pmatrix}
+q_1 \cos n\theta_1\hat{\zeta}_1^{n/B}-q_2 \sin n\theta_1\hat{\zeta}_1^{n/B}\\
+q_2 \cos n\theta_1\hat{\zeta}_1^{n/B}+q_1 \sin n\theta_1\hat{\zeta}_1^{n/B}\\
+\vdots \\
+q_{n-1} \cos n\theta_{d/2}\hat{\zeta}_{d/2}^{n/B}-q_n \sin n\theta_{d/2}\hat{\zeta}_{d/2}^{n/B}\\
+q_n \cos n\theta_{d/2}\hat{\zeta}_{d/2}^{n/B}+q_{n-1} \sin n\theta_{d/2}\hat{\zeta}_{d/2}^{n/B}
+\end{pmatrix}
+\quad\quad
+f_k(k,n)=
+\begin{pmatrix}
+k_1cosn\theta_1\hat{\zeta}_1^{-n/B}-k_2 \sin n\theta_1\hat{\zeta}_1^{-n/B}\\
+k_2 \cos n\theta_1\hat{\zeta}_1^{-n/B}+k_1 \sin n\theta_1\hat{\zeta}_1^{-n/B}\\
+\vdots \\
+k_{n-1} \cos n\theta_{d/2}\hat{\zeta}_{d/2}^{-n/B}-k_n \sin n\theta_{d/2}\hat{\zeta}_{d/2}^{-n/B}\\
+k_n \cos n\theta_{d/2}\hat{\zeta}_{d/2}^{-n/B}+k_{n-1} \sin n\theta_{d/2}\hat{\zeta}_{d/2}^{-n/B}
+\end{pmatrix}
+$$
+
+### [**BCA**](https://github.com/sunyt32/torchscale/blob/main/torchscale/component/multihead_attention.py#L101): Block Causal Attention
+
+## Third-Party Implementation
+- XPos: [**Flash-Attention**](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/layers/rotary.py)
+
+
+
 # TorchScale - A Library for Transformers at (Any) Scale
 
 <p>
@@ -16,9 +47,6 @@ It has the implementation of fundamental research to improve modeling generality
 ## News
 
 - November, 2022: TorchScale 0.1.1 released [[Paper](https://arxiv.org/abs/2211.13184)] [[PyPI](https://pypi.org/project/torchscale/)]
-
-## Third-Party Implementation
-- XPos: [**Flash-Attention**](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/layers/rotary.py)
 
 ## Installation
 
