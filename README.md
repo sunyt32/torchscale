@@ -1,3 +1,14 @@
+# **LEX**: A Length-Extrapolatable Transformer
+
+## Key Feature
+- [**XPos**](https://github.com/sunyt32/torchscale/blob/main/torchscale/component/xpos_relative_position.py): An Extrapolatable Position Embedding for Transformer decoder.
+- [**BCA**](https://github.com/sunyt32/torchscale/blob/main/torchscale/component/multihead_attention.py#L101): An efficient implementation for Block Causal Attention.
+
+## Third-Party Implementation
+- XPos: [**Flash-Attention**](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/layers/rotary.py)
+
+
+
 # TorchScale - A Library for Transformers at (Any) Scale
 
 <p>
@@ -16,9 +27,6 @@ It has the implementation of fundamental research to improve modeling generality
 ## News
 
 - November, 2022: TorchScale 0.1.1 released [[Paper](https://arxiv.org/abs/2211.13184)] [[PyPI](https://pypi.org/project/torchscale/)]
-
-## Third-Party Implementation
-- XPos: [**Flash-Attention**](https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/layers/rotary.py)
 
 ## Installation
 
