@@ -24,9 +24,7 @@ class XPos(nn.Module):
             "scale", (torch.arange(0, head_dim, 2) + 0.4 * head_dim) / (1.4 * head_dim)
         )
 
-    def forward(self, len, offset=0):
-        min = -(len + offset) // 2
-        max = len + offset + min
-        scale = self.scale ** torch.arange(min, max, 1).to(self.scale).div(self.scale_base)[:, None]
+    def forward(self, len):
+        scale = self.scale ** (torch.arange(0, len, 1) - len // 2).to(self.scale).div(self.scale_base)[:, None]
         sin, cos = fixed_pos_embedding(scale)
         return (sin, cos, scale)

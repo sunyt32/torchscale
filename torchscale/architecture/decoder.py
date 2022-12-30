@@ -408,7 +408,6 @@ class Decoder(nn.Module):
             src_length = prev_output_tokens.shape[1]
             pad_length = (src_length + self.half_block_size - 1) // self.half_block_size * self.half_block_size
             align_pad_length = pad_length - src_length
-            incremental_length = pad_length - self.block_size
             if self_attn_padding_mask is None:
                 self_attn_padding_mask = torch.zeros_like(prev_output_tokens)
 
@@ -427,10 +426,10 @@ class Decoder(nn.Module):
         slen = prev_output_tokens.size(1)
         if self.self_attn_xpos is not None:
             if activate_block:
-                self_attn_rel_pos_bias = self.self_attn_xpos(self.block_size, 0)
+                self_attn_rel_pos_bias = self.self_attn_xpos(self.block_size)
             else:
-                offset = 0 if incremental_state is None else incremental_state[0]["prev_key"].shape[2]
-                self_attn_rel_pos_bias = self.self_attn_xpos(slen, offset)
+                rel_pos_len = slen if incremental_state is None else (incremental_state[0]["prev_key"].shape[2] + 1)
+                self_attn_rel_pos_bias = self.self_attn_xpos(rel_pos_len)
         elif self.self_attn_relative_position is not None:
             self_attn_rel_pos_bias = self.self_attn_relative_position(
                 batch_size=x.size(1), qlen=slen, klen=slen
@@ -496,13 +495,9 @@ class Decoder(nn.Module):
             l_aux.append(l_aux_i)
             inner_states.append(x)
             if self.block_size > 0 and incremental_state is not None:
-                if activate_block:
-                    incremental_state[idx]["prev_key"] = incremental_state[idx]["prev_key"][:, :, incremental_length:(src_length + 1)]
-                    incremental_state[idx]["prev_value"] = incremental_state[idx]["prev_value"][:, :, incremental_length:(src_length + 1)]
-                else:
-                    if incremental_state[idx]["prev_key"].shape[2] > self.block_size:
-                        incremental_state[idx]["prev_key"] = incremental_state[idx]["prev_key"][:, :, self.half_block_size:]
-                        incremental_state[idx]["prev_value"] = incremental_state[idx]["prev_value"][:, :, self.half_block_size:]
+                if incremental_state[idx]["prev_key"].shape[2] > self.block_size: # Window Attention is implemented here
+                    incremental_state[idx]["prev_key"] = incremental_state[idx]["prev_key"][:, :, -self.block_size:]
+                    incremental_state[idx]["prev_value"] = incremental_state[idx]["prev_value"][:, :, -self.block_size:]
 
 
         if self.layer_norm is not None:
