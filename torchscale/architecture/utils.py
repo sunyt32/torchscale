@@ -31,3 +31,7 @@ def init_bert_params(module):
             normal_(module.q_proj.weight.data)
             normal_(module.k_proj.weight.data)
             normal_(module.v_proj.weight.data)
+
+def reset_parameters(module):
+    if hasattr(module, "reset_parameters"):
+        module.reset_parameters()

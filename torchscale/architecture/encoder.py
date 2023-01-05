@@ -6,7 +6,6 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from apex.normalization import FusedLayerNorm as LayerNorm
 from fairscale.nn import checkpoint_wrapper, wrap
 
 from torchscale.architecture.utils import init_bert_params
@@ -25,7 +24,7 @@ class EncoderLayer(nn.Module):
         self.args = args
         self.embed_dim = args.encoder_embed_dim
         self.self_attn = self.build_self_attention(self.embed_dim, args)
-        self.self_attn_layer_norm = MultiwayWrapper(args, LayerNorm(self.embed_dim))
+        self.self_attn_layer_norm = MultiwayWrapper(args, nn.LayerNorm(self.embed_dim))
         self.dropout_module = torch.nn.Dropout(args.dropout, inplace=True)
 
         if args.drop_path_rate > 0:
@@ -70,7 +69,7 @@ class EncoderLayer(nn.Module):
                 )
             experts = make_experts(args, self.embed_dim, self.ffn_dim)
             self.moe_layer = MOELayer(gate, experts, args)
-        self.final_layer_norm = MultiwayWrapper(args, LayerNorm(self.embed_dim))
+        self.final_layer_norm = MultiwayWrapper(args, nn.LayerNorm(self.embed_dim))
 
         if args.deepnorm:
             if is_encoder_decoder:
@@ -186,7 +185,7 @@ class Encoder(nn.Module):
 
         if args.layernorm_embedding:
             self.layernorm_embedding = MultiwayWrapper(
-                args, LayerNorm(embed_dim), dim=1
+                args, nn.LayerNorm(embed_dim), dim=1
             )
         else:
             self.layernorm_embedding = None
@@ -207,7 +206,7 @@ class Encoder(nn.Module):
         self.num_layers = len(self.layers)
 
         if args.encoder_normalize_before:
-            self.layer_norm = MultiwayWrapper(args, LayerNorm(embed_dim))
+            self.layer_norm = MultiwayWrapper(args, nn.LayerNorm(embed_dim))
         else:
             self.layer_norm = None
 

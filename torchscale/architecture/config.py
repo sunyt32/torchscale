@@ -94,7 +94,7 @@ class DecoderConfig(object):
         )
         self.use_xmoe = kwargs.pop("use_xmoe", False)
         self.xpos_rel_pos = kwargs.pop("xpos_rel_pos", False)
-        self.block_size = kwargs.pop("block_size", 2048)
+        self.block_size = kwargs.pop("block_size", -1)
         self.rel_pos_buckets = kwargs.pop("rel_pos_buckets", 0)
         self.max_rel_pos = kwargs.pop("max_rel_pos", 0)
         self.deepnorm = kwargs.pop("deepnorm", False)
@@ -112,6 +112,11 @@ class DecoderConfig(object):
         self.checkpoint_activations = kwargs.pop("checkpoint_activations", False)
         self.fsdp = kwargs.pop("fsdp", False)
         self.ddp_rank = kwargs.pop("ddp_rank", 0)
+        # StateLM
+        self.mode = kwargs.pop("mode", "default")
+        self.s4 = kwargs.pop("s4", False)
+        self.ffn_s4 = kwargs.pop("ffn_s4", False)
+        self.global_token = kwargs.pop("global_token", False)
 
         if self.deepnorm:
             self.decoder_normalize_before = False

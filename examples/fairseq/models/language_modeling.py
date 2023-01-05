@@ -189,7 +189,7 @@ class LanguageConfig(FairseqDataclass):
         metadata={"help": "use XPos as the relative position embhedding"},
     )
     block_size: Optional[int] = field(
-        default=2048,
+        default=-1,
     )
     rel_pos_buckets: Optional[int] = field(
         default=0,
@@ -335,7 +335,7 @@ def base_lm_architecture(args):
         args, "xpos_rel_pos", True
     )
     args.block_size = getattr(
-        args, "block_size", 2048
+        args, "block_size", -1
     )
     args.share_decoder_input_output_embed = getattr(
         args, "share_decoder_input_output_embed", False
