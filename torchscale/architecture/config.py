@@ -93,7 +93,7 @@ class DecoderConfig(object):
             "moe_normalize_gate_prob_before_dropping", False
         )
         self.use_xmoe = kwargs.pop("use_xmoe", False)
-        self.xpos_rel_pos = kwargs.pop("xpos_rel_pos", False)
+        self.xpos_rel_pos = kwargs.pop("xpos_rel_pos", True)
         self.block_size = kwargs.pop("block_size", -1)
         self.rel_pos_buckets = kwargs.pop("rel_pos_buckets", 0)
         self.max_rel_pos = kwargs.pop("max_rel_pos", 0)
@@ -115,7 +115,6 @@ class DecoderConfig(object):
         # StateLM
         self.mode = kwargs.pop("mode", "default")
         self.s4 = kwargs.pop("s4", False)
-        self.ffn_s4 = kwargs.pop("ffn_s4", False)
         self.global_token = kwargs.pop("global_token", False)
 
         if self.deepnorm:
