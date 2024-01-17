@@ -62,9 +62,25 @@ class _AllToAll(torch.autograd.Function):
     def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor]:
         return (None, _AllToAll.apply(ctx.group, *grad_output))
 
+class AddAuxiliaryLoss(torch.autograd.Function):
+    """
+    The trick function of adding auxiliary (aux) loss, 
+    which includes the gradient of the aux loss during backpropagation.
+    """
+    @staticmethod
+    def forward(ctx, x, loss):
+        assert loss.numel() == 1
+        ctx.dtype = loss.dtype
+        ctx.required_aux_loss = loss.requires_grad
+        return x
 
-
-
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_loss = None
+        if ctx.required_aux_loss:
+            grad_loss = torch.ones(1, dtype=ctx.dtype, device=grad_output.device)
+        return grad_output, grad_loss
+    
 class MOELayer(Base):
     """MOELayer module which implements MixtureOfExperts as described in Gshard_.
     ::
@@ -83,7 +99,7 @@ class MOELayer(Base):
             expert network
     """
 
-    def __init__(self, gate, experts, args):
+    def __init__(self, gate, experts, share_experts, args):
         if has_fairseq:
             super(Base, self).__init__()
         else:
@@ -97,6 +113,8 @@ class MOELayer(Base):
         self.all2all_group = get_all2all_group(args.moe_expert_count)
         self.world_size = dist.get_world_size(group=self.expert_group)
         self.all2all_size = dist.get_world_size(group=self.all2all_group)
+        self.share_experts = share_experts
+        self.aux_loss_alpha = args.aux_loss_alpha
         for p in experts.parameters():
             p.expert = True  # type: ignore
         self.num_local_experts = len(self.experts)
@@ -105,106 +123,30 @@ class MOELayer(Base):
         self.a2a_cuda_event_intervals = []
         self.a2a_cpu_time_ms = 0.0
 
-    def forward(self, *input: Tensor, input_padding_mask=None, **kwargs: Any) -> Tensor:
+    def forward(self, *input: Tensor) -> Tensor:
         assert len(input) == 1, "only single input Tensor supported"
         input = input[0]
+        identity = input
         assert (
             len(input.shape) == 3
         ), "input Tensor must have dimensions: (s)equence, (t)oken, (m)odel"
-        if input_padding_mask is not None:
-            assert (
-                len(input_padding_mask.shape) == 2
-            ), "input Tensor must have dimensions: (s)equence, (t)oken"
-            assert input_padding_mask.shape[0] == input.shape[0]
-            assert input_padding_mask.shape[1] == input.shape[1]
         # assert input.shape[0] % len(self.experts) == 0, "num tokens must be order of number of local experts"
 
         # Implement Algorithm 2 from GShard paper.
         d_model = input.shape[2]
         # Pad to expected batch size
         input_shape = list(input.shape)
-        expected_bsz = (
-            getattr(self.args, "batch_size", 0)
-            if self.training
-            else getattr(self.args, "batch_size_valid", 0)
-        )
-        # This indicates that --batch-size or --max-sentences is not specified
-        if expected_bsz is None:
-            expected_bsz = 0
         # Note: Padding is not necessary at generation time at present
         # because all DDP workers process the same batch. Also, batch size at generation time
-        # can be different from that present in the checkpoint state
-        if (
-            not self.in_generation
-            and expected_bsz != 0
-            and input_shape[0] != expected_bsz
-        ):
-            logger.warning(
-                f"padding batch with unexpected size {input_shape[0]} (expected: {expected_bsz})"
-            )
-            assert input_shape[0] < expected_bsz, f"{input_shape[0]} < {expected_bsz}"
-            padded_input = torch.zeros(
-                (expected_bsz, input_shape[1], input_shape[2]),
-                dtype=input.dtype,
-                layout=input.layout,
-                device=input.device,
-            )
-            padded_input[: input_shape[0], :, :] = input
-            input = padded_input
-
-            padded_input_padding_mask = torch.ones(
-                (
-                    expected_bsz,
-                    input_shape[1],
-                ),
-                dtype=torch.bool,
-                device=input.device,
-            )
-            if input_padding_mask is not None:
-                padded_input_padding_mask[: input_shape[0], :] = input_padding_mask
-            else:
-                padded_input_padding_mask[: input_shape[0], :] = False
-            input_padding_mask = padded_input_padding_mask
-
         # Reshape into S tokens by dropping sequence dimension.
         reshaped_input = input.reshape(-1, d_model)
-        reshaped_input_shape = reshaped_input.shape
-        reshaped_input_padding_mask = (
-            input_padding_mask.reshape(-1) if input_padding_mask is not None else None
-        )
 
         # Doing padding here when --max-tokens is specified and not --batch-size or --max-sentences
         # Pro of --max-tokens: more flexible for MT variable sequence lengths
         # Con of --max-tokens: extra all-reduce needed to figure out optimal padding without running OOM
-        if expected_bsz == 0:
-            expected_dim = reshaped_input_shape[0] * torch.ones(
-                (1,), dtype=torch.long, device=input.device
-            )
-            dist.all_reduce(expected_dim, group=dist.group.WORLD, op=dist.ReduceOp.MAX)
-            expected_dim = int(expected_dim.item())
-            padded_input = torch.zeros(
-                (expected_dim, reshaped_input_shape[1]),
-                dtype=input.dtype,
-                layout=input.layout,
-                device=input.device,
-            )
-            padded_input[: reshaped_input_shape[0], :] = reshaped_input
-            reshaped_input = padded_input
-
-            padded_input_padding_mask = torch.ones(
-                (expected_dim,), dtype=torch.bool, device=padded_input.device
-            )
-            if reshaped_input_padding_mask is not None:
-                padded_input_padding_mask[
-                    : reshaped_input_shape[0]
-                ] = reshaped_input_padding_mask
-            else:
-                padded_input_padding_mask[: reshaped_input_shape[0]] = False
-            reshaped_input_padding_mask = padded_input_padding_mask
-
         if has_tutel:
             l_aux, self.metadata, C, E, indices_, locations_, gates_ = self.gate(
-                reshaped_input, reshaped_input_padding_mask
+                reshaped_input
             )
             S, M = reshaped_input.size(0), reshaped_input.size(1)
 
@@ -216,7 +158,7 @@ class MOELayer(Base):
             dispatched_input = self._tutel_dispatcher.encode(reshaped_input)
         else:
             l_aux, combine_weights, dispatch_mask, self.metadata = self.gate(
-                reshaped_input, reshaped_input_padding_mask
+                reshaped_input
             )
 
             dispatch_mask = dispatch_mask.to(input.dtype).permute(
@@ -262,13 +204,13 @@ class MOELayer(Base):
             )
 
         # Remove padding here when --max-tokens is specified and not --batch-size or --max-sentences
-        combined_output = combined_output[: reshaped_input_shape[0], :]
-        combined_output = combined_output.reshape(input.shape)
-        combined_output = combined_output[: input_shape[0], :, :]
-
+        combined_output = combined_output.reshape(input_shape)
         self.record_all_to_all_stats()
+        if self.share_experts is not None:
+            combined_output = combined_output + self.share_experts(identity)
 
-        return combined_output, l_aux
+        combined_output = AddAuxiliaryLoss.apply(combined_output, self.aux_loss_alpha * l_aux)
+        return combined_output
 
     def prepare_for_inference_(self):
         self.in_generation = True

@@ -35,13 +35,10 @@ SAMPLE_FRACTION = 0.2
 
 def top1gating(
     logits: torch.Tensor,
-    input_mask: Optional[torch.Tensor] = None,
     use_fp32=False,
     capacity_factor=1.0,
     eval_mode=False,
     moe_eval_capacity_token_fraction=EVAL_CAPACITY_TOKEN_FRACTION,
-    use_xmoe=False,
-    gate_obj=None,
 ) -> Tuple[Tensor, Tensor, Tensor, Dict]:
     """Implements Top2Gating on logits."""
     metadata = {}
@@ -64,10 +61,6 @@ def top1gating(
     # Create a mask for 1st's expert per token
     indices1_s = torch.argmax(gates, dim=1)
     mask1 = one_hot(indices1_s, num_classes=num_experts, unsqueeze_indices=True)
-    if input_mask is not None and input_mask.any():
-        nonpadding = ~input_mask
-        mask1 = mask1 * nonpadding.unsqueeze(-1).to(mask1.dtype)
-
     # for logging (percent of tokens routed to each expert)
     expert1_hist = (
         100
@@ -163,45 +156,29 @@ class Top1Gate(torch.nn.Module):
         input_noise_type=None,
         capacity_factor=1.0,
         moe_eval_capacity_token_fraction=EVAL_CAPACITY_TOKEN_FRACTION,
-        use_xmoe=False,
     ) -> None:
         # TODO: merge this to top2gate.py
         #
         super().__init__()
+        self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
+        wg = torch.empty(num_experts, 16)
+        torch.nn.init.orthogonal_(wg, gain=0.32)
+        self.register_parameter("wg", torch.nn.Parameter(wg))
 
-        if not use_xmoe:
-            self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
-        else:
-            self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
-            wg = torch.empty(num_experts, 16)
-            torch.nn.init.orthogonal_(wg, gain=0.32)
-            self.register_parameter("wg", torch.nn.Parameter(wg))
-
-        self.use_xmoe = use_xmoe
         self.use_fp32 = use_fp32
         self.input_noise_type = input_noise_type
         self.capacity_factor = capacity_factor
         self.moe_eval_capacity_token_fraction = moe_eval_capacity_token_fraction
 
-    def forward(self, input, mask=None):  # type: ignore
-        if self.use_xmoe:
-            input = self.wg_reduction(input)
-            with torch.no_grad():
-                wg_norm = self.wg.norm(p=2.0, dim=1, keepdim=True)
-                self.wg.mul_(1.5 / wg_norm)
-            logits = self._cosine(input, self.wg)
-            logits = self._make_finite(logits)
-        else:
-            logits = self.wg(input)
+    def forward(self, input):  # type: ignore
+        logits = self.wg(input)
 
         return top1gating(
             logits,
-            mask,
             use_fp32=self.use_fp32,
             capacity_factor=self.capacity_factor,
             eval_mode=not self.training,
             moe_eval_capacity_token_fraction=self.moe_eval_capacity_token_fraction,
-            use_xmoe=self.use_xmoe,
             gate_obj=self,
         )
 
@@ -255,9 +232,9 @@ def entropy(probs):
     return -p_log_p.sum(-1)
 
 
-def top2gating(
+def topkgating(
     logits: torch.Tensor,
-    input_mask: Optional[torch.Tensor] = None,
+    topk: int,
     use_fp32=False,
     second_expert_policy="sampling",
     normalize_gate_prob_before_dropping=False,
@@ -265,7 +242,7 @@ def top2gating(
     moe_eval_capacity_token_fraction=0.25,
     batch_prioritized_routing=False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """Implements Top2Gating on logits."""
+    """Implements TopkGating on logits."""
     metadata = {}
     if use_fp32:
         orig_dtype = logits.dtype
@@ -279,7 +256,7 @@ def top2gating(
         capacity = math.ceil(moe_eval_capacity_token_fraction * num_tokens)
     else:
         # capacity = 2S/E
-        capacity = 2 * math.ceil(num_tokens / num_experts)
+        capacity = topk * math.ceil(num_tokens / num_experts)
 
     # Create a mask for 1st's expert per token
     indices1_s = torch.argmax(gates, dim=1, keepdim=True)
@@ -292,7 +269,7 @@ def top2gating(
         logits_w_noise = logits
     # Replace top-expert with min value
     logits_except1 = logits_w_noise.masked_fill(mask1.bool(), float("-inf"))
-    indices2_s = torch.argmax(logits_except1, dim=1, keepdim=True)
+    indices2_s, _ = torch.topk(logits_except1, dim=1, topk=topk)
     mask2 = one_hot(indices2_s, num_experts)
     gates1_s = (gates * mask1).sum(dim=1)
     gates2_s = (gates * mask2).sum(dim=1)
@@ -308,12 +285,6 @@ def top2gating(
     if second_expert_policy == "random":
         sampled = (2 * gates2_s) > torch.rand_like(gates2_s)
         mask2 = mask2 * sampled.repeat(num_experts, 1).transpose(1, 0)
-
-    # Compute locations in capacity buffer
-    if input_mask is not None and input_mask.any():
-        nonpadding = ~input_mask
-        mask1 = mask1 * nonpadding.unsqueeze(-1).to(mask1.dtype)
-        mask2 = mask2 * nonpadding.unsqueeze(-1).to(mask1.dtype)
 
     if batch_prioritized_routing:
         # if batch_prioritized_routing:
@@ -445,7 +416,7 @@ def top2gating(
         return l_aux, combine_weights, dispatch_mask, metadata
 
 
-class Top2Gate(torch.nn.Module):
+class TopkGate(torch.nn.Module):
     """Gate module which implements Top2Gating as described in Gshard_.
     ::
 
@@ -466,42 +437,31 @@ class Top2Gate(torch.nn.Module):
     def __init__(
         self,
         model_dim: int,
+        top_k: int,
         num_experts: int,
         use_fp32=False,
         second_expert_policy="sampling",
         normalize_gate_prob_before_dropping=False,
         moe_eval_capacity_token_fraction=0.25,
         batch_prioritized_routing=False,
-        use_xmoe=False,
     ) -> None:
         super().__init__()
-        if not use_xmoe:
-            self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
-        else:
-            self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
-            wg = torch.empty(num_experts, 16)
-            torch.nn.init.orthogonal_(wg, gain=0.32)
-            self.register_parameter("wg", torch.nn.Parameter(wg))
+        self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
+        wg = torch.empty(num_experts, 16)
+        torch.nn.init.orthogonal_(wg, gain=0.32)
+        self.register_parameter("wg", torch.nn.Parameter(wg))
         self.use_fp32 = use_fp32
+        self.top_k = top_k
         self.second_expert_policy = second_expert_policy
         self.normalize_gate_prob_before_dropping = normalize_gate_prob_before_dropping
         self.moe_eval_capacity_token_fraction = moe_eval_capacity_token_fraction
         self.batch_prioritized_routing = batch_prioritized_routing
-        self.use_xmoe = use_xmoe
 
-    def forward(self, input, mask=None):  # type: ignore
-        if self.use_xmoe:
-            input = self.wg_reduction(input)
-            with torch.no_grad():
-                wg_norm = self.wg.norm(p=2.0, dim=1, keepdim=True)
-                self.wg.mul_(1.5 / wg_norm)
-            logits = self._cosine(input, self.wg)
-            logits = self._make_finite(logits)
-        else:
-            logits = self.wg(input)
-        return top2gating(
+    def forward(self, input):  # type: ignore
+        logits = self.wg(input)
+        return topkgating(
             logits,
-            mask,
+            topk=self.top_k,
             use_fp32=self.use_fp32,
             second_expert_policy=self.second_expert_policy,
             normalize_gate_prob_before_dropping=self.normalize_gate_prob_before_dropping,
@@ -510,16 +470,3 @@ class Top2Gate(torch.nn.Module):
             batch_prioritized_routing=self.batch_prioritized_routing,
         )
 
-    def _cosine(self, mat1, mat2, eps=1e-4):
-        assert mat1.dim() == 2
-        assert mat2.dim() == 2
-        # mat1 = F.normalize(mat1, p=2.0, dim=1, eps=eps)
-        mat2 = F.normalize(mat2.float(), p=2.0, dim=1, eps=eps)
-        return mat1.float().matmul(mat2.transpose(0, 1)).type_as(mat1)
-
-    def _make_finite(self, scores):
-        ok = scores.isfinite()
-        if not ok.all():
-            # NaNs here can break the assignment algorithm
-            scores[~ok] = scores[ok].min()
-        return scores
