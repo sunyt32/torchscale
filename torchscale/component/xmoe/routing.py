@@ -160,10 +160,7 @@ class Top1Gate(torch.nn.Module):
         # TODO: merge this to top2gate.py
         #
         super().__init__()
-        self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
-        wg = torch.empty(num_experts, 16)
-        torch.nn.init.orthogonal_(wg, gain=0.32)
-        self.register_parameter("wg", torch.nn.Parameter(wg))
+        self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
 
         self.use_fp32 = use_fp32
         self.input_noise_type = input_noise_type
@@ -179,27 +176,7 @@ class Top1Gate(torch.nn.Module):
             capacity_factor=self.capacity_factor,
             eval_mode=not self.training,
             moe_eval_capacity_token_fraction=self.moe_eval_capacity_token_fraction,
-            gate_obj=self,
         )
-
-    def _make_finite(self, scores):
-        ok = scores.isfinite()
-        if not ok.all():
-            # NaNs here can break the assignment algorithm
-            scores[~ok] = scores[ok].min()
-        return scores
-
-    def _get_gating_temperature(self, eps=1e-4):
-        if self.gating_t.data.item() < eps:
-            return eps
-        return self.gating_t
-
-    def _cosine(self, mat1, mat2, eps=1e-4):
-        assert mat1.dim() == 2
-        assert mat2.dim() == 2
-        # mat1 = F.normalize(mat1, p=2.0, dim=1, eps=eps)
-        mat2 = F.normalize(mat2.float(), p=2.0, dim=1, eps=eps)
-        return mat1.float().matmul(mat2.transpose(0, 1)).type_as(mat1)
 
 
 gumbel_map: Dict[torch.device, Callable] = {}
@@ -218,7 +195,6 @@ def gumbel_rsample(shape: Tuple, device: torch.device) -> Tensor:
 def one_hot(indices: torch.Tensor, num_classes: int, unsqueeze_indices=False) -> Tensor:
     if unsqueeze_indices:
         indices = indices.unsqueeze(-1)
-    assert indices.shape[-1] == 1, "last dimension of indices must be have size 1"
     output = torch.zeros(
         indices.shape[:-1] + (num_classes,), device=indices.device, dtype=indices.dtype
     )
@@ -269,7 +245,7 @@ def topkgating(
         logits_w_noise = logits
     # Replace top-expert with min value
     logits_except1 = logits_w_noise.masked_fill(mask1.bool(), float("-inf"))
-    indices2_s, _ = torch.topk(logits_except1, dim=1, topk=topk)
+    _, indices2_s = torch.topk(logits_except1, dim=1, k=topk - 1)
     mask2 = one_hot(indices2_s, num_experts)
     gates1_s = (gates * mask1).sum(dim=1)
     gates2_s = (gates * mask2).sum(dim=1)
@@ -279,15 +255,14 @@ def topkgating(
         denom_s = gates1_s + gates2_s
         # Avoid divide-by-zero
         denom_s = torch.clamp(denom_s, min=torch.finfo(denom_s.dtype).eps)
-        gates1_s = gates1_s / denom_s
-        gates2_s = gates2_s / denom_s
+        # gates1_s = gates1_s / denom_s
+        # gates2_s = gates2_s / denom_s
 
     if second_expert_policy == "random":
-        sampled = (2 * gates2_s) > torch.rand_like(gates2_s)
+        sampled = (topk * gates2_s) > torch.rand_like(gates2_s)
         mask2 = mask2 * sampled.repeat(num_experts, 1).transpose(1, 0)
 
     if batch_prioritized_routing:
-        # if batch_prioritized_routing:
         importance_scores = -1 * gates.max(dim=1)[0]
         sorted_mask1 = mask1[importance_scores.argsort(dim=0)]
         sorted_cumsum1 = fused_cumsum_sub_one(sorted_mask1) * sorted_mask1
@@ -373,8 +348,8 @@ def topkgating(
         denom_s = gates1_s + gates2_s
         # Avoid divide-by-zero
         denom_s = torch.clamp(denom_s, min=torch.finfo(denom_s.dtype).eps)
-        gates1_s /= denom_s
-        gates2_s /= denom_s
+        # gates1_s /= denom_s
+        # gates2_s /= denom_s
 
     if has_tutel:
         locations1_s = torch.sum(locations1 * mask1_, dim=1)
@@ -390,24 +365,30 @@ def topkgating(
         )
 
     # Store the capacity location for each token
-    locations1_s = torch.sum(locations1 * mask1, dim=1)
-    locations2_s = torch.sum(locations2 * mask2, dim=1)
+    locations1_s = locations1 * mask1
+    locations2_s = locations2 * mask2
+    # locations1_s = torch.sum(locations1 * mask1, dim=1)
+    # locations2_s = torch.sum(locations2 * mask2, dim=1)
 
     # Calculate combine_weights and dispatch_mask
-    gates1 = gates1_s.unsqueeze(-1) * mask1.to(gates1_s.dtype)  # einsum("s,se->se")
-    gates2 = gates2_s.unsqueeze(-1) * mask2.to(gates2_s.dtype)  # einsum("s,se->se")
+    gates1 = gates * mask1.to(gates.dtype) / denom_s.unsqueeze(-1) # einsum("s,se->se")
+    gates2 = gates * mask2.to(gates.dtype) / denom_s.unsqueeze(-1) # einsum("s,se->se")
     locations1_sc = one_hot(locations1_s, num_classes=capacity, unsqueeze_indices=True)
     locations2_sc = one_hot(locations2_s, num_classes=capacity, unsqueeze_indices=True)
-    combine1_sec = torch.bmm(
-        # einsum("se,sc->sec")
-        gates1.unsqueeze(-1),
-        locations1_sc.to(gates1.dtype).unsqueeze(1),
-    )
-    combine2_sec = torch.bmm(
-        # einsum("se,sc->sec")
-        gates2.unsqueeze(-1),
-        locations2_sc.to(gates2.dtype).unsqueeze(1),
-    )
+
+    combine1_sec = gates1.unsqueeze(-1) * locations1_sc.to(gates1.dtype)
+    combine2_sec = gates2.unsqueeze(-1) * locations2_sc.to(gates1.dtype)
+
+    # combine1_sec = torch.bmm(
+    #     # einsum("se,sc->sec")
+    #     gates1.unsqueeze(-1),
+    #     locations1_sc.to(gates1.dtype).unsqueeze(1),
+    # )
+    # combine2_sec = torch.bmm(
+    #     # einsum("se,sc->sec")
+    #     gates2.unsqueeze(-1),
+    #     locations2_sc.to(gates2.dtype).unsqueeze(1),
+    # )
     combine_weights = combine1_sec + combine2_sec
     dispatch_mask = combine_weights.bool()
     if use_fp32:
@@ -446,10 +427,7 @@ class TopkGate(torch.nn.Module):
         batch_prioritized_routing=False,
     ) -> None:
         super().__init__()
-        self.wg_reduction = torch.nn.Linear(model_dim, 16, bias=False)
-        wg = torch.empty(num_experts, 16)
-        torch.nn.init.orthogonal_(wg, gain=0.32)
-        self.register_parameter("wg", torch.nn.Parameter(wg))
+        self.wg = torch.nn.Linear(model_dim, num_experts, bias=False)
         self.use_fp32 = use_fp32
         self.top_k = top_k
         self.second_expert_policy = second_expert_policy

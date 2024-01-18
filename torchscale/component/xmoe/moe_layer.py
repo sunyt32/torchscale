@@ -123,10 +123,7 @@ class MOELayer(Base):
         self.a2a_cuda_event_intervals = []
         self.a2a_cpu_time_ms = 0.0
 
-    def forward(self, *input: Tensor) -> Tensor:
-        assert len(input) == 1, "only single input Tensor supported"
-        input = input[0]
-        identity = input
+    def forward(self, input: Tensor) -> Tensor:
         assert (
             len(input.shape) == 3
         ), "input Tensor must have dimensions: (s)equence, (t)oken, (m)odel"
@@ -140,6 +137,7 @@ class MOELayer(Base):
         # because all DDP workers process the same batch. Also, batch size at generation time
         # Reshape into S tokens by dropping sequence dimension.
         reshaped_input = input.reshape(-1, d_model)
+        reshaped_input_shape = reshaped_input.shape
 
         # Doing padding here when --max-tokens is specified and not --batch-size or --max-sentences
         # Pro of --max-tokens: more flexible for MT variable sequence lengths
@@ -204,10 +202,12 @@ class MOELayer(Base):
             )
 
         # Remove padding here when --max-tokens is specified and not --batch-size or --max-sentences
-        combined_output = combined_output.reshape(input_shape)
+        combined_output = combined_output[: reshaped_input_shape[0], :]
+        combined_output = combined_output.reshape(input.shape)
+        combined_output = combined_output[: input_shape[0], :, :]
         self.record_all_to_all_stats()
         if self.share_experts is not None:
-            combined_output = combined_output + self.share_experts(identity)
+            combined_output = combined_output + self.share_experts(input)
 
         combined_output = AddAuxiliaryLoss.apply(combined_output, self.aux_loss_alpha * l_aux)
         return combined_output
